@@ -2,10 +2,12 @@ import sys
 import os
 import argparse
 import re
+import json
 from datetime import datetime
 
-# Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+# Add src to path - using absolute path of the script's directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(BASE_DIR, "src"))
 
 from binary_parser import GhostBinaryParser
 from file_tracker import GhostFileTracker
@@ -14,124 +16,148 @@ from evidence_collector import GhostEvidenceCollector
 from gap_detector import GhostGapDetector
 
 class GhostTrail:
-    def __init__(self):
+    def __init__(self, base_output_dir=None):
+        # Default to a 'data' folder next to the script if not specified
+        self.base_output_dir = base_output_dir or os.path.join(BASE_DIR, "data")
+        os.makedirs(self.base_output_dir, exist_ok=True)
+        
         self.parser = GhostBinaryParser()
         self.tracker = GhostFileTracker()
         self.history = GhostHistoryParser()
-        self.collector = GhostEvidenceCollector()
+        self.collector = GhostEvidenceCollector(output_dir=os.path.join(self.base_output_dir, "evidence"))
         self.gaps = GhostGapDetector()
         
-        # Suspicious patterns to flag in command history
         self.danger_patterns = [
-            r"rm\s+.*log", r"history\s+-c", r"unset\s+HISTFILE", # Trace deletion
-            r"chmod\s+777", r"chown\s+root",                   # Privilege escalation
-            r"curl.*\|\s*bash", r"wget.*\|\s*sh",              # Remote execution
-            r"useradd", r"usermod\s+-aG\s+sudo",               # Backdoor creation
-            r"nc\s+-e", r"bash\s+-i\s+>\s*&"                   # Reverse shell
+            r"rm\s+.*log", r"history\s+-c", r"unset\s+HISTFILE",
+            r"chmod\s+777", r"chown\s+root",
+            r"curl.*\|\s*bash", r"wget.*\|\s*sh",
+            r"useradd", r"usermod\s+-aG\s+sudo",
+            r"nc\s+-e", r"bash\s+-i\s+>\s*&"
         ]
 
-    def _is_suspicious(self, command):
-        """Checks if a command matches any dangerous patterns."""
-        for pattern in self.danger_patterns:
-            if re.search(pattern, command, re.IGNORECASE):
-                return True
-        return False
+    def _detect_deleted_executables(self):
+        """Forensic check: Find processes running from deleted files on disk."""
+        alerts = []
+        try:
+            for pid in os.listdir('/proc'):
+                if pid.isdigit():
+                    try:
+                        exe_path = os.readlink(f'/proc/{pid}/exe')
+                        if " (deleted)" in exe_path:
+                            alerts.append({
+                                "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                "type": "ALERT",
+                                "msg": f"PROCESS GHOSTING: PID {pid} is running from a deleted file: {exe_path}",
+                                "level": "CRITICAL"
+                            })
+                    except (OSError, FileNotFoundError): continue
+        except Exception: pass
+        return alerts
 
     def generate_timeline(self, hours=24):
         timeline = []
-        artifacts = set() # To track file paths for collection
+        artifacts = set()
 
-        # 1. Logins (wtmp)
+        # 1. Deleted Executable Check (Unique Forensic Insight)
+        timeline.extend(self._detect_deleted_executables())
+
+        # 2. Logins
         wtmp_path = "/var/log/wtmp"
         logins = self.parser.parse_wtmp(wtmp_path)
         if os.path.exists(wtmp_path): artifacts.add(wtmp_path)
-        
         for log in logins:
             if "error" in log: continue
             log_time = datetime.strptime(log['timestamp'], '%Y-%m-%d %H:%M:%S')
             if (datetime.now() - log_time).total_seconds() < (hours * 3600):
-                timeline.append({
-                    "time": log['timestamp'],
-                    "type": "LOGIN",
-                    "msg": f"User '{log['user']}' session from {log['host']}",
-                    "level": "INFO"
-                })
+                timeline.append({"time": log['timestamp'], "type": "LOGIN", "msg": f"User '{log['user']}' session from {log['host']}", "level": "INFO"})
 
-        # 2. Log Gaps (Inconsistency detection)
-        log_gaps = self.gaps.find_gaps(threshold_minutes=120)
-        for gap in log_gaps:
+        # 3. Log Gaps
+        for gap in self.gaps.find_gaps(threshold_minutes=120):
             if "error" in gap: continue
-            # Only show gaps within our window
             gap_end_time = datetime.strptime(gap['end'], '%Y-%m-%d %H:%M:%S')
             if (datetime.now() - gap_end_time).total_seconds() < (hours * 3600):
-                timeline.append({
-                    "time": gap['start'],
-                    "type": "ALERT",
-                    "msg": f"INCONSISTENCY: Large time gap detected in logs ({gap['gap_minutes']} min)",
-                    "level": "WARN"
-                })
+                timeline.append({"time": gap['start'], "type": "ALERT", "msg": f"INCONSISTENCY: Time gap in logs ({gap['gap_minutes']} min)", "level": "WARN"})
 
-        # 3. File Changes
+        # 4. File Changes
         files = self.tracker.scan_recent_changes(hours=hours)
         for f in files:
             artifacts.add(f['path'])
-            timeline.append({
-                "time": f['modified'],
-                "type": "FILE",
-                "msg": f"Modified: {f['path']} ({f['size']} bytes)",
-                "level": "INFO"
-            })
+            timeline.append({"time": f['modified'], "type": "FILE", "msg": f"Modified: {f['path']} ({f['size']} bytes)", "level": "INFO"})
 
-        # 4. Command History
-        recent_cmds = self.history.scan_histories()
-        for cmd in recent_cmds:
+        # 5. History
+        for cmd in self.history.scan_histories():
             if self._is_suspicious(cmd['command']):
-                timeline.append({
-                    "time": "RECENT",
-                    "type": "ALERT",
-                    "msg": f"CRITICAL: User '{cmd['user']}' ran suspicious command: {cmd['command']}",
-                    "level": "CRITICAL"
-                })
+                timeline.append({"time": "RECENT", "type": "ALERT", "msg": f"CRITICAL: User '{cmd['user']}' ran suspicious command: {cmd['command']}", "level": "CRITICAL"})
 
-        # Sort timeline
         timeline.sort(key=lambda x: x['time'])
         return timeline, list(artifacts)
 
-    def run(self, hours=24, collect=False):
-        print(f"\033[90m══════════════════════════════════════════════════════════════\033[0m")
-        print(f"  \033[1mGHOST-TRAIL\033[0m  —  Forensic Timeline Reconstructor")
-        print(f"\033[90m══════════════════════════════════════════════════════════════\033[0m")
-        print(f"  Target:     \033[96mLocal System\033[0m")
-        print(f"  Window:     \033[96mLast {hours} hours\033[0m")
-        print(f"  Generated:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"\033[90m══════════════════════════════════════════════════════════════\033[0m\n")
+    def _is_suspicious(self, command):
+        for pattern in self.danger_patterns:
+            if re.search(pattern, command, re.IGNORECASE): return True
+        return False
 
+    def export_html(self, timeline, output_file):
+        template = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ghost-Trail Forensic Report</title>
+    <style>
+        body {{ background-color: #050a0f; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 40px; }}
+        .header {{ border-bottom: 1px solid #1a2a3a; padding-bottom: 20px; margin-bottom: 30px; }}
+        h1 {{ color: #00d4ff; font-family: 'Courier New', monospace; letter-spacing: 2px; }}
+        .entry {{ display: flex; padding: 10px; border-bottom: 1px solid #0d141b; font-size: 0.9em; }}
+        .time {{ width: 180px; color: #5a6b7a; font-family: 'Courier New', monospace; }}
+        .type {{ width: 80px; font-weight: bold; }}
+        .LOGIN {{ color: #00d4ff; }}
+        .FILE {{ color: #40ffaa; }}
+        .ALERT {{ color: #ff4d4d; }}
+        .msg {{ flex: 1; }}
+        .footer {{ margin-top: 40px; font-size: 0.8em; color: #5a6b7a; text-align: center; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>GHOST-TRAIL // FORENSIC TIMELINE</h1>
+        <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+    </div>
+    {" ".join([f'<div class="entry"><div class="time">{e["time"]}</div><div class="type {e["type"]}">{e["type"]}</div><div class="msg">{e["msg"]}</div></div>' for e in timeline])}
+    <div class="footer">&copy; 2026 shadowfox.se</div>
+</body>
+</html>"""
+        with open(output_file, "w") as f: f.write(template)
+
+    def run(self, hours=24, collect=False, json_file=None, html_file=None):
         events, artifact_paths = self.generate_timeline(hours=hours)
         
-        if not events:
-            print("  [!] No activity found in the given window.")
-        else:
-            for e in events:
-                color = "\033[94m" # Blue for Login
-                if e['type'] == "FILE": color = "\033[92m" # Green for File
-                if e['type'] == "ALERT": color = "\033[91m" # Red for Alert
-                
-                reset = "\033[0m"
-                print(f"  {e['time']:<19}  {color}{e['type']:<8}{reset}  {e['msg']}")
+        # Terminal Output
+        print(f"\n  [+] Reconstructed {len(events)} forensic events.")
+        for e in events:
+            color = "\033[94m" if e['type'] == "LOGIN" else "\033[92m"
+            if e['type'] == "ALERT": color = "\033[91m"
+            print(f"  {e['time']:<19}  {color}{e['type']:<8}\033[0m  {e['msg']}")
+
+        if json_file:
+            with open(json_file, "w") as f: json.dump(events, f, indent=4)
+            print(f"\n  [SUCCESS] JSON report saved: {json_file}")
+
+        if html_file:
+            self.export_html(events, html_file)
+            print(f"  [SUCCESS] HTML report saved: {html_file}")
 
         if collect:
-            print(f"\n\033[1m--- Forensic Evidence Collection ---\033[0m")
-            # Also add history files to collection
+            print(f"\n--- Forensic Evidence Collection ---")
             histories = self.history.get_history_paths()
             self.collector.collect_artifacts(artifact_paths + histories)
-
-        print(f"\n\033[90m══════════════════════════════════════════════════════════════\033[0m")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ghost-Trail: Forensic Reconstructor")
     parser.add_argument("--hours", type=int, default=24, help="Timeline window in hours")
-    parser.add_argument("--collect", action="store_true", help="Package all identified artifacts into a secure ZIP")
+    parser.add_argument("--collect", action="store_true", help="Package artifacts into ZIP")
+    parser.add_argument("--json", help="Export timeline to JSON file")
+    parser.add_argument("--html", help="Export timeline to HTML report")
     args = parser.parse_args()
 
     ghost = GhostTrail()
-    ghost.run(hours=args.hours, collect=args.collect)
+    ghost.run(hours=args.hours, collect=args.collect, json_file=args.json, html_file=args.html)
