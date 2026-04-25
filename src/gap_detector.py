@@ -20,18 +20,14 @@ class GhostGapDetector:
         try:
             with open(self.log_path, "r", errors="ignore") as f:
                 for line in f:
-                    # Standard syslog timestamp format (Oct 11 14:32:01)
-                    # or ISO 8601 (2026-04-25T14:32:01)
                     match = re.search(r'^([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}|20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})', line)
                     if match:
                         ts_str = match.group(1)
                         try:
-                            # Parse syslog format
                             if "T" in ts_str:
                                 current_time = datetime.strptime(ts_str[:19], '%Y-%m-%dT%H:%M:%S')
                             else:
                                 current_time = datetime.strptime(ts_str, '%b %d %H:%M:%S')
-                                # Syslog doesn't have year, assume current year
                                 current_time = current_time.replace(year=datetime.now().year)
                             
                             if last_time:
@@ -51,11 +47,8 @@ class GhostGapDetector:
         return gaps
 
 if __name__ == "__main__":
+    # Test block is now path-agnostic
     detector = GhostGapDetector()
-    print(f"--- Ghost-Trail: Scanning {detector.log_path} for time gaps ---")
-    detected_gaps = detector.find_gaps(threshold_minutes=60)
-    for g in detected_gaps:
-        if "error" in g:
-            print(f"  [!] {g['error']}")
-        else:
-            print(f"  [ALERT] Log gap of {g['gap_minutes']} min detected between {g['start']} and {g['end']}")
+    print(f"--- Ghost-Trail: Scanning {detector.log_path} ---")
+    for g in detector.find_gaps(threshold_minutes=60):
+        print(f"  [ALERT] Log gap: {g.get('gap_minutes', 'ERR')} min")
