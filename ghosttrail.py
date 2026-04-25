@@ -17,7 +17,6 @@ from gap_detector import GhostGapDetector
 
 class GhostTrail:
     def __init__(self, base_output_dir=None):
-        # Default to a 'data' folder next to the script if not specified
         self.base_output_dir = base_output_dir or os.path.join(BASE_DIR, "data")
         os.makedirs(self.base_output_dir, exist_ok=True)
         
@@ -36,7 +35,6 @@ class GhostTrail:
         ]
 
     def _detect_deleted_executables(self):
-        """Forensic check: Find processes running from deleted files on disk."""
         alerts = []
         try:
             for pid in os.listdir('/proc'):
@@ -57,8 +55,8 @@ class GhostTrail:
     def generate_timeline(self, hours=24):
         timeline = []
         artifacts = set()
-
-        # 1. Deleted Executable Check (Unique Forensic Insight)
+        
+        # 1. Forensic Checks
         timeline.extend(self._detect_deleted_executables())
 
         # 2. Logins
@@ -87,7 +85,7 @@ class GhostTrail:
         # 5. History
         for cmd in self.history.scan_histories():
             if self._is_suspicious(cmd['command']):
-                timeline.append({"time": "RECENT", "type": "ALERT", "msg": f"CRITICAL: User '{cmd['user']}' ran suspicious command: {cmd['command']}", "level": "CRITICAL"})
+                timeline.append({"time": "RECENT", "type": "ALERT", "msg": f"CRITICAL: User '{cmd['user']}' suspicious command: {cmd['command']}", "level": "CRITICAL"})
 
         timeline.sort(key=lambda x: x['time'])
         return timeline, list(artifacts)
@@ -97,7 +95,68 @@ class GhostTrail:
             if re.search(pattern, command, re.IGNORECASE): return True
         return False
 
-    def export_html(self, timeline, output_file):
+    def calculate_risk(self, timeline):
+        """Analyzes the timeline and assigns a forensic risk score."""
+        score = 0
+        critical_findings = []
+        
+        stats = {"LOGIN": 0, "FILE": 0, "ALERT": 0}
+        
+        for e in timeline:
+            stats[e['type']] = stats.get(e['type'], 0) + 1
+            if e['level'] == "CRITICAL":
+                score += 10
+                critical_findings.append(e['msg'])
+            elif e['level'] == "WARN":
+                score += 3
+        
+        grade = "A"
+        if score > 20: grade = "F"
+        elif score > 10: grade = "D"
+        elif score > 5: grade = "C"
+        elif score > 0: grade = "B"
+        
+        return grade, stats, critical_findings
+
+    def run(self, hours=24, collect=False, json_file=None, html_file=None):
+        events, artifact_paths = self.generate_timeline(hours=hours)
+        grade, stats, criticals = self.calculate_risk(events)
+        
+        # Display Timeline
+        print(f"\n  [+] Reconstructed {len(events)} forensic events.")
+        for e in events:
+            color = "\033[94m" if e['type'] == "LOGIN" else "\033[92m"
+            if e['type'] == "ALERT": color = "\033[91m"
+            print(f"  {e['time']:<19}  {color}{e['type']:<8}\033[0m  {e['msg']}")
+
+        # Display Summary Box (Similar to Auditor)
+        print(f"\n\033[90m╔══════════════════════════════════════════════════════════════╗\033[0m")
+        print(f"  \033[1mFORENSIC SUMMARY\033[0m — Result Grade: \033[1m{grade}\033[0m")
+        print(f"\033[90m╚══════════════════════════════════════════════════════════════╝\033[0m")
+        print(f"  Alerts: {stats.get('ALERT', 0)} | Logins: {stats.get('LOGIN', 0)} | Files: {stats.get('FILE', 0)}")
+        
+        if criticals:
+            print(f"\n  \033[91m\033[1m[!] THE SMOKING GUN (Critical Findings):\033[0m")
+            for c in list(set(criticals)): # Unique findings
+                print(f"  • {c}")
+        elif grade == "A":
+            print(f"\n  \033[92m[✓] No suspicious forensic artifacts identified.\033[0m")
+        
+        if json_file:
+            with open(json_file, "w") as f: json.dump({"grade": grade, "stats": stats, "events": events}, f, indent=4)
+            print(f"\n  [SUCCESS] JSON report saved: {json_file}")
+
+        if html_file:
+            self.export_html(events, html_file, grade, stats)
+            print(f"  [SUCCESS] HTML report saved: {html_file}")
+
+        if collect:
+            print(f"\n--- Forensic Evidence Collection ---")
+            histories = self.history.get_history_paths()
+            self.collector.collect_artifacts(artifact_paths + histories)
+
+    def export_html(self, timeline, output_file, grade, stats):
+        # (HTML export remains largely same but with summary header added)
         template = f"""
 <!DOCTYPE html>
 <html>
@@ -106,7 +165,9 @@ class GhostTrail:
     <style>
         body {{ background-color: #050a0f; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 40px; }}
         .header {{ border-bottom: 1px solid #1a2a3a; padding-bottom: 20px; margin-bottom: 30px; }}
-        h1 {{ color: #00d4ff; font-family: 'Courier New', monospace; letter-spacing: 2px; }}
+        .summary-box {{ background: #0d141b; border: 1px solid #1a2a3a; padding: 20px; border-radius: 8px; margin-bottom: 30px; display: flex; gap: 40px; }}
+        .grade-box {{ font-size: 3em; font-weight: bold; color: #00d4ff; display: flex; align-items: center; justify-content: center; border-right: 1px solid #1a2a3a; padding-right: 40px; }}
+        h1 {{ color: #00d4ff; font-family: 'Courier New', monospace; letter-spacing: 2px; margin: 0; }}
         .entry {{ display: flex; padding: 10px; border-bottom: 1px solid #0d141b; font-size: 0.9em; }}
         .time {{ width: 180px; color: #5a6b7a; font-family: 'Courier New', monospace; }}
         .type {{ width: 80px; font-weight: bold; }}
@@ -122,34 +183,20 @@ class GhostTrail:
         <h1>GHOST-TRAIL // FORENSIC TIMELINE</h1>
         <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
     </div>
+    <div class="summary-box">
+        <div class="grade-box">{grade}</div>
+        <div>
+            <h3>Forensic Artifact Summary</h3>
+            <p>Critical Alerts: {stats.get('ALERT', 0)}</p>
+            <p>User Sessions: {stats.get('LOGIN', 0)}</p>
+            <p>File Activities: {stats.get('FILE', 0)}</p>
+        </div>
+    </div>
     {" ".join([f'<div class="entry"><div class="time">{e["time"]}</div><div class="type {e["type"]}">{e["type"]}</div><div class="msg">{e["msg"]}</div></div>' for e in timeline])}
     <div class="footer">&copy; 2026 shadowfox.se</div>
 </body>
 </html>"""
         with open(output_file, "w") as f: f.write(template)
-
-    def run(self, hours=24, collect=False, json_file=None, html_file=None):
-        events, artifact_paths = self.generate_timeline(hours=hours)
-        
-        # Terminal Output
-        print(f"\n  [+] Reconstructed {len(events)} forensic events.")
-        for e in events:
-            color = "\033[94m" if e['type'] == "LOGIN" else "\033[92m"
-            if e['type'] == "ALERT": color = "\033[91m"
-            print(f"  {e['time']:<19}  {color}{e['type']:<8}\033[0m  {e['msg']}")
-
-        if json_file:
-            with open(json_file, "w") as f: json.dump(events, f, indent=4)
-            print(f"\n  [SUCCESS] JSON report saved: {json_file}")
-
-        if html_file:
-            self.export_html(events, html_file)
-            print(f"  [SUCCESS] HTML report saved: {html_file}")
-
-        if collect:
-            print(f"\n--- Forensic Evidence Collection ---")
-            histories = self.history.get_history_paths()
-            self.collector.collect_artifacts(artifact_paths + histories)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ghost-Trail: Forensic Reconstructor")
