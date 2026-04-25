@@ -9,6 +9,26 @@ class GhostHistoryParser:
             ".python_history"
         ]
 
+    def get_history_paths(self):
+        """Returns list of actual history file paths for collection."""
+        paths = []
+        user_homes = [os.path.expanduser("~"), "/root"]
+        home_base = "/home"
+        if os.path.exists(home_base):
+            try:
+                for user_dir in os.listdir(home_base):
+                    full_path = os.path.join(home_base, user_dir)
+                    if os.path.isdir(full_path) and full_path not in user_homes:
+                        user_homes.append(full_path)
+            except PermissionError: pass
+
+        for home in user_homes:
+            for h_file in self.history_files:
+                p = Path(home) / h_file
+                if p.exists():
+                    paths.append(str(p))
+        return paths
+
     def scan_histories(self):
         """Scans home directories for command history files."""
         all_commands = []

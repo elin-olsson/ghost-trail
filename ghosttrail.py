@@ -10,12 +10,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 from binary_parser import GhostBinaryParser
 from file_tracker import GhostFileTracker
 from history_parser import GhostHistoryParser
+from evidence_collector import GhostEvidenceCollector
+from gap_detector import GhostGapDetector
 
 class GhostTrail:
     def __init__(self):
         self.parser = GhostBinaryParser()
         self.tracker = GhostFileTracker()
         self.history = GhostHistoryParser()
+        self.collector = GhostEvidenceCollector()
+        self.gaps = GhostGapDetector()
         
         # Suspicious patterns to flag in command history
         self.danger_patterns = [
@@ -35,9 +39,13 @@ class GhostTrail:
 
     def generate_timeline(self, hours=24):
         timeline = []
+        artifacts = set() # To track file paths for collection
 
         # 1. Logins (wtmp)
-        logins = self.parser.parse_wtmp()
+        wtmp_path = "/var/log/wtmp"
+        logins = self.parser.parse_wtmp(wtmp_path)
+        if os.path.exists(wtmp_path): artifacts.add(wtmp_path)
+        
         for log in logins:
             if "error" in log: continue
             log_time = datetime.strptime(log['timestamp'], '%Y-%m-%d %H:%M:%S')
@@ -49,9 +57,24 @@ class GhostTrail:
                     "level": "INFO"
                 })
 
-        # 2. File Changes
+        # 2. Log Gaps (Inconsistency detection)
+        log_gaps = self.gaps.find_gaps(threshold_minutes=120)
+        for gap in log_gaps:
+            if "error" in gap: continue
+            # Only show gaps within our window
+            gap_end_time = datetime.strptime(gap['end'], '%Y-%m-%d %H:%M:%S')
+            if (datetime.now() - gap_end_time).total_seconds() < (hours * 3600):
+                timeline.append({
+                    "time": gap['start'],
+                    "type": "ALERT",
+                    "msg": f"INCONSISTENCY: Large time gap detected in logs ({gap['gap_minutes']} min)",
+                    "level": "WARN"
+                })
+
+        # 3. File Changes
         files = self.tracker.scan_recent_changes(hours=hours)
         for f in files:
+            artifacts.add(f['path'])
             timeline.append({
                 "time": f['modified'],
                 "type": "FILE",
@@ -59,8 +82,7 @@ class GhostTrail:
                 "level": "INFO"
             })
 
-        # 3. Command History (Note: history usually lacks precise timestamps, 
-        # so we place them at the end of the timeline as 'Recent Activity')
+        # 4. Command History
         recent_cmds = self.history.scan_histories()
         for cmd in recent_cmds:
             if self._is_suspicious(cmd['command']):
@@ -71,11 +93,11 @@ class GhostTrail:
                     "level": "CRITICAL"
                 })
 
-        # Sort timeline (RECENT items will stay at bottom if sort is stable or handled)
+        # Sort timeline
         timeline.sort(key=lambda x: x['time'])
-        return timeline
+        return timeline, list(artifacts)
 
-    def run(self, hours=24):
+    def run(self, hours=24, collect=False):
         print(f"\033[90m══════════════════════════════════════════════════════════════\033[0m")
         print(f"  \033[1mGHOST-TRAIL\033[0m  —  Forensic Timeline Reconstructor")
         print(f"\033[90m══════════════════════════════════════════════════════════════\033[0m")
@@ -84,7 +106,7 @@ class GhostTrail:
         print(f"  Generated:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"\033[90m══════════════════════════════════════════════════════════════\033[0m\n")
 
-        events = self.generate_timeline(hours=hours)
+        events, artifact_paths = self.generate_timeline(hours=hours)
         
         if not events:
             print("  [!] No activity found in the given window.")
@@ -97,12 +119,19 @@ class GhostTrail:
                 reset = "\033[0m"
                 print(f"  {e['time']:<19}  {color}{e['type']:<8}{reset}  {e['msg']}")
 
+        if collect:
+            print(f"\n\033[1m--- Forensic Evidence Collection ---\033[0m")
+            # Also add history files to collection
+            histories = self.history.get_history_paths()
+            self.collector.collect_artifacts(artifact_paths + histories)
+
         print(f"\n\033[90m══════════════════════════════════════════════════════════════\033[0m")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ghost-Trail: Forensic Reconstructor")
     parser.add_argument("--hours", type=int, default=24, help="Timeline window in hours")
+    parser.add_argument("--collect", action="store_true", help="Package all identified artifacts into a secure ZIP")
     args = parser.parse_args()
 
     ghost = GhostTrail()
-    ghost.run(hours=args.hours)
+    ghost.run(hours=args.hours, collect=args.collect)
