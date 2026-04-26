@@ -27,8 +27,8 @@ class GhostGapDetector:
                             if "T" in ts_str:
                                 current_time = datetime.strptime(ts_str[:19], '%Y-%m-%dT%H:%M:%S')
                             else:
-                                current_time = datetime.strptime(ts_str, '%b %d %H:%M:%S')
-                                current_time = current_time.replace(year=datetime.now().year)
+                                year = datetime.now().year
+                                current_time = datetime.strptime(f"{year} {ts_str}", '%Y %b %d %H:%M:%S')
                             
                             if last_time:
                                 diff = (current_time - last_time).total_seconds() / 60

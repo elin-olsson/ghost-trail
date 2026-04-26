@@ -15,6 +15,166 @@ from history_parser import GhostHistoryParser
 from evidence_collector import GhostEvidenceCollector
 from gap_detector import GhostGapDetector
 
+_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghost-Trail Forensic Report</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #050a0f; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; padding: 40px; }
+h1 { color: #00d4ff; font-family: 'Courier New', monospace; letter-spacing: 2px; }
+h2 { color: #5a8fa8; font-size: 13px; font-family: 'Courier New', monospace; letter-spacing: 1px;
+     text-transform: uppercase; margin: 28px 0 10px; border-bottom: 1px solid #1a2a3a; padding-bottom: 6px; }
+.header { border-bottom: 1px solid #1a2a3a; padding-bottom: 20px; margin-bottom: 30px; }
+.subtitle { color: #5a6b7a; font-size: 13px; margin-top: 6px; }
+.summary-box { background: #0d141b; border: 1px solid #1a2a3a; padding: 20px; border-radius: 8px;
+               margin-bottom: 30px; display: flex; gap: 40px; align-items: center; }
+.grade-box { font-size: 3em; font-weight: bold; color: #00d4ff;
+             border-right: 1px solid #1a2a3a; padding-right: 40px; }
+.stat-item { color: #a0b0c0; font-size: 14px; line-height: 2.2; }
+.stat-item strong { color: #e0e0e0; }
+#tl-controls { margin-bottom: 10px; display: flex; align-items: center; gap: 16px; }
+#tl-reset { background: #0d141b; color: #00d4ff; border: 1px solid #1a2a3a;
+            padding: 4px 12px; cursor: pointer; font-size: 12px; border-radius: 3px; }
+#tl-reset:hover { background: #1a2a3a; }
+.tl-filter { font-size: 12px; color: #a0b0c0; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+#tl-wrap { position: relative; background: #07101a; border: 1px solid #1a2a3a;
+           border-radius: 6px; overflow: hidden; margin-bottom: 30px; }
+#tl-tip { display: none; position: absolute; background: #0d141b; border: 1px solid #1a2a3a;
+          color: #e0e0e0; font-size: 12px; padding: 8px 12px; border-radius: 4px;
+          pointer-events: none; max-width: 380px; line-height: 1.6; z-index: 10; }
+.entry { display: flex; padding: 7px 4px; border-bottom: 1px solid #0a141e; font-size: 12px; }
+.entry:hover { background: #0a1520; }
+.etime { width: 190px; color: #5a6b7a; font-family: 'Courier New', monospace; flex-shrink: 0; }
+.etype { width: 60px; font-weight: bold; font-family: 'Courier New', monospace; flex-shrink: 0; }
+.etype.LOGIN { color: #00d4ff; }
+.etype.FILE  { color: #40ffaa; }
+.etype.ALERT { color: #ff4d4d; }
+.emsg { flex: 1; color: #c0c0c0; }
+.footer { margin-top: 40px; font-size: 11px; color: #3a4a5a; text-align: center; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>GHOST-TRAIL // FORENSIC TIMELINE</h1>
+  <p class="subtitle">Generated: __GENERATED__</p>
+</div>
+<div class="summary-box">
+  <div class="grade-box">__GRADE__</div>
+  <div>
+    <div class="stat-item"><strong>Critical Alerts</strong>: __ALERT_COUNT__</div>
+    <div class="stat-item"><strong>User Sessions</strong>: __LOGIN_COUNT__</div>
+    <div class="stat-item"><strong>File Activities</strong>: __FILE_COUNT__</div>
+  </div>
+</div>
+<h2>Interactive Timeline</h2>
+<div id="tl-controls">
+  <button id="tl-reset">Reset Zoom</button>
+  <label class="tl-filter"><input type="checkbox" data-type="ALERT" checked> <span style="color:#ff4d4d">ALERT</span></label>
+  <label class="tl-filter"><input type="checkbox" data-type="LOGIN" checked> <span style="color:#00d4ff">LOGIN</span></label>
+  <label class="tl-filter"><input type="checkbox" data-type="FILE"  checked> <span style="color:#40ffaa">FILE</span></label>
+</div>
+<div id="tl-wrap"><svg id="tl" style="display:block"></svg><div id="tl-tip"></div></div>
+<h2>Event Log</h2>
+<div id="event-list">__EVENT_ROWS__</div>
+<div class="footer">&copy; 2026 shadowfox.se &mdash; ghost-trail</div>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function () {
+  var EVENTS  = __EVENTS_JSON__;
+  var LANES   = ["ALERT", "LOGIN", "FILE"];
+  var COLORS  = { ALERT: "#ff4d4d", LOGIN: "#00d4ff", FILE: "#40ffaa" };
+  var LANE_H  = 62;
+  var M       = { top: 16, right: 30, bottom: 36, left: 72 };
+  var wrap    = document.getElementById("tl-wrap");
+  var W       = wrap.clientWidth || 900;
+  var IW      = W - M.left - M.right;
+  var IH      = LANES.length * LANE_H;
+  var H       = IH + M.top + M.bottom;
+  var parseFn = d3.timeParse("%Y-%m-%d %H:%M:%S");
+  var evs = EVENTS.map(function (e) {
+    return { type: e.type, msg: e.msg, time: e.time, date: parseFn(e.time) };
+  }).filter(function (e) { return e.date; });
+  var svg = d3.select("#tl").attr("width", W).attr("height", H);
+  if (!evs.length) {
+    svg.append("text").attr("x", W / 2).attr("y", H / 2)
+       .attr("text-anchor", "middle").attr("fill", "#5a6b7a").attr("font-size", 13)
+       .text("No events to display.");
+    return;
+  }
+  var ext = d3.extent(evs, function (e) { return e.date; });
+  var pad = Math.max((ext[1] - ext[0]) * 0.04, 5000);
+  var x0  = d3.scaleTime()
+    .domain([new Date(ext[0].getTime() - pad), new Date(ext[1].getTime() + pad)])
+    .range([0, IW]);
+  svg.append("defs").append("clipPath").attr("id", "gt-clip")
+     .append("rect").attr("width", IW).attr("height", IH + 4);
+  var g     = svg.append("g").attr("transform", "translate(" + M.left + "," + M.top + ")");
+  var dotsG = g.append("g").attr("clip-path", "url(#gt-clip)");
+  LANES.forEach(function (lane, i) {
+    g.append("rect").attr("x", 0).attr("y", i * LANE_H)
+     .attr("width", IW).attr("height", LANE_H)
+     .attr("fill", i % 2 === 0 ? "#08141f" : "#0d141b");
+    g.append("line").attr("x1", 0).attr("x2", IW)
+     .attr("y1", (i + 1) * LANE_H).attr("y2", (i + 1) * LANE_H)
+     .attr("stroke", "#1a2a3a");
+    g.append("text").attr("x", -8).attr("y", i * LANE_H + LANE_H / 2 + 4)
+     .attr("text-anchor", "end").attr("fill", COLORS[lane])
+     .attr("font-size", 11).attr("font-family", "monospace").text(lane);
+  });
+  var xAxisG  = g.append("g").attr("transform", "translate(0," + IH + ")");
+  var xAxisFn = d3.axisBottom(x0).ticks(6).tickFormat(d3.timeFormat("%H:%M:%S"));
+  function styleAxis(ag, scale) {
+    ag.call(xAxisFn.scale(scale));
+    ag.selectAll("text").attr("fill", "#5a6b7a").attr("font-size", 10);
+    ag.selectAll(".domain, line").attr("stroke", "#1a2a3a");
+  }
+  styleAxis(xAxisG, x0);
+  var tip    = d3.select("#tl-tip");
+  var active = new Set(LANES);
+  function render(xScale) {
+    var visible = evs.filter(function (e) { return active.has(e.type); });
+    var dots = dotsG.selectAll(".gt-dot").data(visible, function (e) { return e.time + e.msg; });
+    dots.enter().append("circle").attr("class", "gt-dot")
+      .attr("r", 5).attr("stroke", "#050a0f").attr("stroke-width", 1).attr("opacity", 0.82)
+      .attr("fill", function (e) { return COLORS[e.type]; })
+      .attr("cy", function (e) { return LANES.indexOf(e.type) * LANE_H + LANE_H / 2; })
+      .on("mouseover", function (event, e) {
+        tip.style("display", "block")
+           .html("<strong>" + e.type + "</strong><br>" + e.time + "<br>" + e.msg);
+        d3.select(this).attr("r", 8).attr("opacity", 1);
+      })
+      .on("mousemove", function (event) {
+        tip.style("left", (event.offsetX + 14) + "px").style("top", (event.offsetY - 14) + "px");
+      })
+      .on("mouseout", function () {
+        tip.style("display", "none");
+        d3.select(this).attr("r", 5).attr("opacity", 0.82);
+      });
+    dotsG.selectAll(".gt-dot").attr("cx", function (e) { return xScale(e.date); });
+    dots.exit().remove();
+    styleAxis(xAxisG, xScale);
+  }
+  var zoom = d3.zoom().scaleExtent([1, 200]).translateExtent([[0, 0], [IW, IH]])
+    .on("zoom", function (ev) { render(ev.transform.rescaleX(x0)); });
+  svg.call(zoom);
+  render(x0);
+  document.getElementById("tl-reset").addEventListener("click", function () {
+    svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity);
+  });
+  document.querySelectorAll("[data-type]").forEach(function (cb) {
+    cb.addEventListener("change", function () {
+      if (cb.checked) active.add(cb.dataset.type); else active.delete(cb.dataset.type);
+      render(x0);
+    });
+  });
+})();
+</script>
+</body>
+</html>"""
+
 class GhostTrail:
     def __init__(self, base_output_dir=None):
         self.base_output_dir = base_output_dir or os.path.join(BASE_DIR, "data")
@@ -83,9 +243,10 @@ class GhostTrail:
             timeline.append({"time": f['modified'], "type": "FILE", "msg": f"Modified: {f['path']} ({f['size']} bytes)", "level": "INFO"})
 
         # 5. History
+        scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         for cmd in self.history.scan_histories():
             if self._is_suspicious(cmd['command']):
-                timeline.append({"time": "RECENT", "type": "ALERT", "msg": f"CRITICAL: User '{cmd['user']}' suspicious command: {cmd['command']}", "level": "CRITICAL"})
+                timeline.append({"time": scan_time, "type": "ALERT", "msg": f"CRITICAL: User '{cmd['user']}' suspicious command: {cmd['command']}", "level": "CRITICAL"})
 
         timeline.sort(key=lambda x: x['time'])
         return timeline, list(artifacts)
@@ -156,47 +317,29 @@ class GhostTrail:
             self.collector.collect_artifacts(artifact_paths + histories)
 
     def export_html(self, timeline, output_file, grade, stats):
-        # (HTML export remains largely same but with summary header added)
-        template = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Ghost-Trail Forensic Report</title>
-    <style>
-        body {{ background-color: #050a0f; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 40px; }}
-        .header {{ border-bottom: 1px solid #1a2a3a; padding-bottom: 20px; margin-bottom: 30px; }}
-        .summary-box {{ background: #0d141b; border: 1px solid #1a2a3a; padding: 20px; border-radius: 8px; margin-bottom: 30px; display: flex; gap: 40px; }}
-        .grade-box {{ font-size: 3em; font-weight: bold; color: #00d4ff; display: flex; align-items: center; justify-content: center; border-right: 1px solid #1a2a3a; padding-right: 40px; }}
-        h1 {{ color: #00d4ff; font-family: 'Courier New', monospace; letter-spacing: 2px; margin: 0; }}
-        .entry {{ display: flex; padding: 10px; border-bottom: 1px solid #0d141b; font-size: 0.9em; }}
-        .time {{ width: 180px; color: #5a6b7a; font-family: 'Courier New', monospace; }}
-        .type {{ width: 80px; font-weight: bold; }}
-        .LOGIN {{ color: #00d4ff; }}
-        .FILE {{ color: #40ffaa; }}
-        .ALERT {{ color: #ff4d4d; }}
-        .msg {{ flex: 1; }}
-        .footer {{ margin-top: 40px; font-size: 0.8em; color: #5a6b7a; text-align: center; }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>GHOST-TRAIL // FORENSIC TIMELINE</h1>
-        <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-    </div>
-    <div class="summary-box">
-        <div class="grade-box">{grade}</div>
-        <div>
-            <h3>Forensic Artifact Summary</h3>
-            <p>Critical Alerts: {stats.get('ALERT', 0)}</p>
-            <p>User Sessions: {stats.get('LOGIN', 0)}</p>
-            <p>File Activities: {stats.get('FILE', 0)}</p>
-        </div>
-    </div>
-    {" ".join([f'<div class="entry"><div class="time">{e["time"]}</div><div class="type {e["type"]}">{e["type"]}</div><div class="msg">{e["msg"]}</div></div>' for e in timeline])}
-    <div class="footer">&copy; 2026 shadowfox.se</div>
-</body>
-</html>"""
-        with open(output_file, "w") as f: f.write(template)
+        rows = "\n".join(
+            f'<div class="entry">'
+            f'<div class="etime">{e["time"]}</div>'
+            f'<div class="etype {e["type"]}">{e["type"]}</div>'
+            f'<div class="emsg">{e["msg"]}</div>'
+            f'</div>'
+            for e in timeline
+        )
+        html = (
+            _HTML_TEMPLATE
+            .replace("__EVENTS_JSON__", json.dumps([
+                {"time": e["time"], "type": e["type"], "msg": e["msg"]}
+                for e in timeline
+            ]))
+            .replace("__GENERATED__", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            .replace("__GRADE__", str(grade))
+            .replace("__ALERT_COUNT__", str(stats.get('ALERT', 0)))
+            .replace("__LOGIN_COUNT__", str(stats.get('LOGIN', 0)))
+            .replace("__FILE_COUNT__", str(stats.get('FILE', 0)))
+            .replace("__EVENT_ROWS__", rows)
+        )
+        with open(output_file, "w") as f:
+            f.write(html)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ghost-Trail: Forensic Reconstructor")

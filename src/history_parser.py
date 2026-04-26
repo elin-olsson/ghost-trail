@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 class GhostHistoryParser:
@@ -57,12 +58,16 @@ class GhostHistoryParser:
                             lines = f.readlines()
                             for line in lines[-50:]:
                                 line = line.strip()
-                                if line and not line.startswith("#"): # Skip timestamps for now
-                                    all_commands.append({
-                                        "user": Path(home).name,
-                                        "source": h_file,
-                                        "command": line
-                                    })
+                                if not line or line.startswith("#"):
+                                    continue
+                                zsh_match = re.match(r'^:\s*\d+:\d+;(.+)$', line)
+                                if zsh_match:
+                                    line = zsh_match.group(1)
+                                all_commands.append({
+                                    "user": Path(home).name,
+                                    "source": h_file,
+                                    "command": line
+                                })
                     except PermissionError:
                         continue
         
