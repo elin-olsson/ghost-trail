@@ -26,8 +26,11 @@ class GhostHistoryParser:
         for home in user_homes:
             for h_file in self.history_files:
                 p = Path(home) / h_file
-                if p.exists():
-                    paths.append(str(p))
+                try:
+                    if p.exists():
+                        paths.append(str(p))
+                except PermissionError:
+                    pass
         return paths
 
     def scan_histories(self):
@@ -51,7 +54,11 @@ class GhostHistoryParser:
         for home in user_homes:
             for h_file in self.history_files:
                 path = Path(home) / h_file
-                if path.exists():
+                try:
+                    exists = path.exists()
+                except PermissionError:
+                    continue
+                if exists:
                     try:
                         # Extract last 50 commands from each file
                         with open(path, "r", errors="ignore") as f:
