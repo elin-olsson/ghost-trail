@@ -1,15 +1,17 @@
-# Ghost-Trail 🦊👻
-**Linux Post-Intrusion Forensic Reconstructor**
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![CI](https://github.com/elin-olsson/ghost-trail/actions/workflows/ci.yml/badge.svg)](https://github.com/elin-olsson/ghost-trail/actions/workflows/ci.yml)
 
-Ghost-Trail is a specialized digital forensics tool designed to reconstruct a chronological timeline of events following a security incident. It uncovers hidden activity by correlating binary system records, filesystem artifacts, and shell command histories.
-
----
+A Linux post-intrusion forensic reconstructor that builds a chronological timeline of system activity from binary records, filesystem artifacts, and shell command histories.
 
 ## Prerequisites
 
 - Python 3.10 or later
-- Root privileges (recommended for full system forensics)
+- Root privileges recommended for full system access
 - No external runtime dependencies
+
+Check your Python version:
+```bash
+python3 --version
+```
 
 ## Installation
 
@@ -25,23 +27,40 @@ python3 ghosttrail.py [options]
 ```
 
 ```bash
-# Generate a forensic timeline for the last 24 hours (default)
+# Reconstruct the last 24 hours (default)
 python3 ghosttrail.py
 
-# Specify a custom time window (e.g., last 48 hours)
+# Custom time window
 python3 ghosttrail.py --hours 48
+
+# Export timeline to JSON
+python3 ghosttrail.py --json report.json
+
+# Export interactive HTML report with timeline
+python3 ghosttrail.py --html report.html
+
+# Package forensic artifacts into a ZIP archive
+python3 ghosttrail.py --collect
 ```
 
-## Forensic Capabilities
+### Flags
 
-Ghost-Trail performs a multi-stage investigation to identify traces of compromise:
+| Flag | Description |
+|---|---|
+| `--hours N` | Reconstruction window in hours (default: 24) |
+| `--json FILE` | Write timeline to JSON file |
+| `--html FILE` | Write interactive HTML report with D3 timeline |
+| `--collect` | Package artifacts into a ZIP archive for handoff |
+
+## What it checks
 
 | Module | Method | Purpose |
 |---|---|---|
-| **Binary Parser** | Direct `utmp/wtmp` decoding | Authenticates sessions directly from system structures. |
-| **File Tracker** | MAC timeline analysis | Identifies files modified in sensitive directories (`/tmp`, `/etc`). |
-| **History Engine** | Multi-shell aggregation | Collects command history from all local users. |
-| **Alert Engine** | Regex pattern matching | Flags evidence of log wiping, backdoor creation, and data exfiltration. |
+| Binary Parser | Direct `utmp`/`wtmp` decoding | Reconstructs login sessions from raw system structures |
+| File Tracker | MAC timeline analysis | Identifies files modified in sensitive directories (`/tmp`, `/etc`) |
+| History Engine | Multi-shell aggregation | Collects command history from all local users (bash, zsh, python) |
+| Gap Detector | Auth log timestamp analysis | Flags suspicious gaps in log continuity |
+| Alert Engine | Regex pattern matching | Flags log wiping, reverse shells, backdoor creation, data exfiltration |
 
 ## Example output
 
@@ -62,15 +81,16 @@ Ghost-Trail performs a multi-stage investigation to identify traces of compromis
 ══════════════════════════════════════════════════════════════
 ```
 
-## Roadmap
+## Dependencies
 
-- [x] Binary wtmp/btmp parsing
-- [x] MAC Timeline reconstruction
-- [x] Shell history aggregation
-- [x] Automated danger pattern flagging
-- [ ] Log gap detection (Inconsistency checking)
-- [ ] Forensic evidence packaging (ZIP export)
+No runtime dependencies — stdlib only.
+
+| Package | Version | Purpose |
+|---|---|---|
+| `pytest` | ≥ 9.0 | Test suite only — not required at runtime |
 
 ---
 
-&copy; 2026 shadowfox.se
+<p align="center">
+  <sub>The banner and logo are &copy; 2026 shadowfox.se — all rights reserved, not covered by the MIT license.</sub>
+</p>
