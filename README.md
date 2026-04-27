@@ -92,5 +92,9 @@ No runtime dependencies — stdlib only.
 ---
 
 <p align="center">
+  <img src="logo.png" alt="ghost-trail logo" width="200">
+</p>
+
+<p align="center">
   <sub>The banner and logo are &copy; 2026 shadowfox.se — all rights reserved, not covered by the MIT license.</sub>
 </p>
