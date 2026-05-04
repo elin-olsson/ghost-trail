@@ -5,7 +5,7 @@ import re
 import json
 from datetime import datetime
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 # Add src to path - using absolute path of the script's directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
