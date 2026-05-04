@@ -64,7 +64,8 @@ python3 ghosttrail.py --collect
 | File Tracker | MAC timeline analysis | Identifies files modified in sensitive directories (`/tmp`, `/etc`) |
 | History Engine | Multi-shell aggregation | Collects command history from all local users (bash, zsh, python) |
 | Gap Detector | Auth log timestamp analysis | Flags suspicious gaps in log continuity |
-| Alert Engine | Regex pattern matching | Flags log wiping, reverse shells, backdoor creation, data exfiltration |
+| Alert Engine | Regex pattern matching (built into `ghosttrail.py`) | Flags log wiping, reverse shells, backdoor creation, data exfiltration |
+| Evidence Collector | ZIP packaging (`src/evidence_collector.py`) | Packages forensic artifacts into an archive for handoff (`--collect`) |
 
 ## Example output
 
