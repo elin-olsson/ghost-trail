@@ -5,7 +5,7 @@ import re
 import json
 from datetime import datetime
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 
 # Add src to path - using absolute path of the script's directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +16,7 @@ from file_tracker import GhostFileTracker
 from history_parser import GhostHistoryParser
 from evidence_collector import GhostEvidenceCollector
 from gap_detector import GhostGapDetector
+from sequence_detector import SequenceDetector
 
 _HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -51,10 +52,19 @@ h2 { color: #5a8fa8; font-size: 13px; font-family: 'Courier New', monospace; let
 .entry:hover { background: #0a1520; }
 .etime { width: 190px; color: #5a6b7a; font-family: 'Courier New', monospace; flex-shrink: 0; }
 .etype { width: 60px; font-weight: bold; font-family: 'Courier New', monospace; flex-shrink: 0; }
-.etype.LOGIN { color: #00d4ff; }
-.etype.FILE  { color: #40ffaa; }
-.etype.ALERT { color: #ff4d4d; }
+.etype.LOGIN     { color: #00d4ff; }
+.etype.FILE      { color: #40ffaa; }
+.etype.ALERT     { color: #ff4d4d; }
+.etype.SEQUENCE  { color: #ff0055; font-weight: bold; }
 .emsg { flex: 1; color: #c0c0c0; }
+.seq-card { background: #0d0a14; border: 1px solid #3a1a2a; border-left: 3px solid #ff0055;
+            padding: 14px 18px; margin-bottom: 12px; border-radius: 4px; }
+.seq-card .seq-title { color: #ff0055; font-family: 'Courier New', monospace; font-size: 13px;
+                       font-weight: bold; margin-bottom: 8px; }
+.seq-card .seq-step  { font-size: 12px; color: #a0b0c0; padding: 2px 0 2px 12px;
+                       border-left: 2px solid #2a1a2a; margin: 3px 0; }
+.seq-card .seq-step span { font-weight: bold; }
+.seq-none { color: #3a4a5a; font-size: 13px; font-style: italic; padding: 10px 0; }
 .footer { margin-top: 40px; font-size: 11px; color: #3a4a5a; text-align: center; }
 </style>
 </head>
@@ -66,6 +76,7 @@ h2 { color: #5a8fa8; font-size: 13px; font-family: 'Courier New', monospace; let
 <div class="summary-box">
   <div class="grade-box">__GRADE__</div>
   <div>
+    <div class="stat-item"><strong>Attack Sequences</strong>: __SEQUENCE_COUNT__</div>
     <div class="stat-item"><strong>Critical Alerts</strong>: __ALERT_COUNT__</div>
     <div class="stat-item"><strong>User Sessions</strong>: __LOGIN_COUNT__</div>
     <div class="stat-item"><strong>File Activities</strong>: __FILE_COUNT__</div>
@@ -74,11 +85,14 @@ h2 { color: #5a8fa8; font-size: 13px; font-family: 'Courier New', monospace; let
 <h2>Interactive Timeline</h2>
 <div id="tl-controls">
   <button id="tl-reset">Reset Zoom</button>
+  <label class="tl-filter"><input type="checkbox" data-type="SEQUENCE" checked> <span style="color:#ff0055">SEQUENCE</span></label>
   <label class="tl-filter"><input type="checkbox" data-type="ALERT" checked> <span style="color:#ff4d4d">ALERT</span></label>
   <label class="tl-filter"><input type="checkbox" data-type="LOGIN" checked> <span style="color:#00d4ff">LOGIN</span></label>
   <label class="tl-filter"><input type="checkbox" data-type="FILE"  checked> <span style="color:#40ffaa">FILE</span></label>
 </div>
 <div id="tl-wrap"><svg id="tl" style="display:block"></svg><div id="tl-tip"></div></div>
+<h2>Attack Sequences</h2>
+<div id="seq-list">__SEQUENCE_ROWS__</div>
 <h2>Event Log</h2>
 <div id="event-list">__EVENT_ROWS__</div>
 <div class="footer">&copy; 2026 shadowfox.se &mdash; ghost-trail</div>
@@ -86,8 +100,8 @@ h2 { color: #5a8fa8; font-size: 13px; font-family: 'Courier New', monospace; let
 <script>
 (function () {
   var EVENTS  = __EVENTS_JSON__;
-  var LANES   = ["ALERT", "LOGIN", "FILE"];
-  var COLORS  = { ALERT: "#ff4d4d", LOGIN: "#00d4ff", FILE: "#40ffaa" };
+  var LANES   = ["SEQUENCE", "ALERT", "LOGIN", "FILE"];
+  var COLORS  = { SEQUENCE: "#ff0055", ALERT: "#ff4d4d", LOGIN: "#00d4ff", FILE: "#40ffaa" };
   var LANE_H  = 62;
   var M       = { top: 16, right: 30, bottom: 36, left: 72 };
   var wrap    = document.getElementById("tl-wrap");
@@ -251,6 +265,11 @@ class GhostTrail:
                 timeline.append({"time": scan_time, "type": "ALERT", "msg": f"CRITICAL: User '{cmd['user']}' suspicious command: {cmd['command']}", "level": "CRITICAL"})
 
         timeline.sort(key=lambda x: x['time'])
+
+        sequences = SequenceDetector().detect(timeline)
+        timeline.extend(sequences)
+        timeline.sort(key=lambda x: x['time'])
+
         return timeline, list(artifacts)
 
     def _is_suspicious(self, command):
@@ -263,10 +282,16 @@ class GhostTrail:
         score = 0
         critical_findings = []
         
-        stats = {"LOGIN": 0, "FILE": 0, "ALERT": 0}
-        
+        stats = {"LOGIN": 0, "FILE": 0, "ALERT": 0, "SEQUENCE": 0}
+
         for e in timeline:
-            stats[e['type']] = stats.get(e['type'], 0) + 1
+            if e['type'] != "SEQUENCE":
+                stats[e['type']] = stats.get(e['type'], 0) + 1
+            else:
+                stats["SEQUENCE"] += 1
+                score += 20
+                critical_findings.append(e['msg'])
+                continue
             if e['level'] == "CRITICAL":
                 score += 10
                 critical_findings.append(e['msg'])
@@ -288,15 +313,17 @@ class GhostTrail:
         # Display Timeline
         print(f"\n  [+] Reconstructed {len(events)} forensic events.")
         for e in events:
-            color = "\033[94m" if e['type'] == "LOGIN" else "\033[92m"
-            if e['type'] == "ALERT": color = "\033[91m"
+            if e['type'] == "LOGIN":      color = "\033[94m"
+            elif e['type'] == "ALERT":    color = "\033[91m"
+            elif e['type'] == "SEQUENCE": color = "\033[95m"
+            else:                         color = "\033[92m"
             print(f"  {e['time']:<19}  {color}{e['type']:<8}\033[0m  {e['msg']}")
 
         # Display Summary Box (Similar to Auditor)
         print(f"\n\033[90m╔══════════════════════════════════════════════════════════════╗\033[0m")
         print(f"  \033[1mFORENSIC SUMMARY\033[0m — Result Grade: \033[1m{grade}\033[0m")
         print(f"\033[90m╚══════════════════════════════════════════════════════════════╝\033[0m")
-        print(f"  Alerts: {stats.get('ALERT', 0)} | Logins: {stats.get('LOGIN', 0)} | Files: {stats.get('FILE', 0)}")
+        print(f"  Sequences: {stats.get('SEQUENCE', 0)} | Alerts: {stats.get('ALERT', 0)} | Logins: {stats.get('LOGIN', 0)} | Files: {stats.get('FILE', 0)}")
         
         if criticals:
             print(f"\n  \033[91m\033[1m[!] THE SMOKING GUN (Critical Findings):\033[0m")
@@ -319,14 +346,31 @@ class GhostTrail:
             self.collector.collect_artifacts(artifact_paths + histories)
 
     def export_html(self, timeline, output_file, grade, stats):
+        sequences = [e for e in timeline if e["type"] == "SEQUENCE"]
+        base_events = [e for e in timeline if e["type"] != "SEQUENCE"]
+
         rows = "\n".join(
             f'<div class="entry">'
             f'<div class="etime">{e["time"]}</div>'
             f'<div class="etype {e["type"]}">{e["type"]}</div>'
             f'<div class="emsg">{e["msg"]}</div>'
             f'</div>'
-            for e in timeline
+            for e in base_events
         )
+
+        if sequences:
+            seq_rows = "\n".join(
+                f'<div class="seq-card">'
+                f'<div class="seq-title">&#x26A0; {s["msg"]}</div>'
+                f'<div class="seq-step"><span>LOGIN</span> &mdash; {s["steps"][0]["time"]} &mdash; {s["steps"][0]["msg"]}</div>'
+                f'<div class="seq-step"><span>ALERT</span> &mdash; {s["steps"][1]["time"]} &mdash; {s["steps"][1]["msg"]}</div>'
+                f'<div class="seq-step"><span>FILE</span> &mdash; {s["steps"][2]["time"]} &mdash; {s["steps"][2]["msg"]}</div>'
+                f'</div>'
+                for s in sequences
+            )
+        else:
+            seq_rows = '<div class="seq-none">No correlated attack sequences detected.</div>'
+
         html = (
             _HTML_TEMPLATE
             .replace("__EVENTS_JSON__", json.dumps([
@@ -335,9 +379,11 @@ class GhostTrail:
             ]))
             .replace("__GENERATED__", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             .replace("__GRADE__", str(grade))
+            .replace("__SEQUENCE_COUNT__", str(stats.get('SEQUENCE', 0)))
             .replace("__ALERT_COUNT__", str(stats.get('ALERT', 0)))
             .replace("__LOGIN_COUNT__", str(stats.get('LOGIN', 0)))
             .replace("__FILE_COUNT__", str(stats.get('FILE', 0)))
+            .replace("__SEQUENCE_ROWS__", seq_rows)
             .replace("__EVENT_ROWS__", rows)
         )
         with open(output_file, "w") as f:

