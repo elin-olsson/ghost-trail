@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import os
 import argparse
@@ -8,7 +9,7 @@ from datetime import datetime
 __version__ = "1.4.0"
 
 # Add src to path - using absolute path of the script's directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(BASE_DIR, "src"))
 
 from binary_parser import GhostBinaryParser
