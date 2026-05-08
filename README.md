@@ -51,6 +51,7 @@ python3 ghosttrail.py --collect
 
 | Flag | Description |
 |---|---|
+| `--version` | Print the version number and exit |
 | `--hours N` | Reconstruction window in hours (default: 24) |
 | `--json FILE` | Write timeline to JSON file |
 | `--html FILE` | Write interactive HTML report with D3 timeline |
@@ -65,6 +66,7 @@ python3 ghosttrail.py --collect
 | History Engine | Multi-shell aggregation | Collects command history from all local users (bash, zsh, python) |
 | Gap Detector | Auth log timestamp analysis | Flags suspicious gaps in log continuity |
 | Alert Engine | Regex pattern matching (built into `ghosttrail.py`) | Flags log wiping, reverse shells, backdoor creation, data exfiltration |
+| Sequence Detector | `src/sequence_detector.py` | Correlates LOGIN → suspicious command → file change into named attack sequences; raises risk score |
 | Evidence Collector | ZIP packaging (`src/evidence_collector.py`) | Packages forensic artifacts into an archive for handoff (`--collect`) |
 
 ## Example output
