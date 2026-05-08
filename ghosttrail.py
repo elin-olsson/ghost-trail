@@ -392,6 +392,7 @@ class GhostTrail:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ghost-Trail: Forensic Reconstructor")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--hours", type=int, default=24, help="Timeline window in hours")
     parser.add_argument("--collect", action="store_true", help="Package artifacts into ZIP")
     parser.add_argument("--json", help="Export timeline to JSON file")
