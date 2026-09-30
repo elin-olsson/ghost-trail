@@ -421,6 +421,50 @@ class TestGhostTrailRiskGrade(unittest.TestCase):
         self.assertIn("test", findings)
 
 
+class TestGhostTrailPdfExport(unittest.TestCase):
+    def setUp(self):
+        self.ghost = GhostTrail(base_output_dir=tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.ghost.base_output_dir, ignore_errors=True)
+
+    def _write(self, timeline, criticals=None):
+        grade, stats, found = self.ghost.calculate_risk(timeline)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            path = f.name
+        try:
+            self.ghost.export_pdf(timeline, path, grade, stats, criticals or found)
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(path)
+
+    def test_writes_valid_pdf_empty_timeline(self):
+        data = self._write([])
+        self.assertTrue(data.startswith(b"%PDF-1.4"))
+        self.assertTrue(data.rstrip().endswith(b"%%EOF"))
+
+    def test_writes_valid_pdf_with_events(self):
+        timeline = [
+            {"time": "2026-04-25 09:00:00", "type": "LOGIN", "msg": "User 'root' session from 10.0.0.1", "level": "INFO"},
+            {"time": "2026-04-25 09:01:00", "type": "ALERT", "msg": "CRITICAL: suspicious command", "level": "CRITICAL"},
+        ]
+        data = self._write(timeline)
+        self.assertTrue(data.startswith(b"%PDF-1.4"))
+
+    def test_writes_valid_pdf_with_sequence(self):
+        timeline = [
+            {"time": "2026-04-25 09:00:00", "type": "SEQUENCE", "msg": "LOGIN -> ALERT -> FILE", "level": "CRITICAL",
+             "steps": [
+                 {"time": "2026-04-25 09:00:00", "msg": "login"},
+                 {"time": "2026-04-25 09:00:05", "msg": "alert"},
+                 {"time": "2026-04-25 09:00:10", "msg": "file"},
+             ]},
+        ]
+        data = self._write(timeline)
+        self.assertTrue(data.startswith(b"%PDF-1.4"))
+
+
 # ── Integration ───────────────────────────────────────────────────────────────
 
 class TestGhostTrailIntegration(unittest.TestCase):

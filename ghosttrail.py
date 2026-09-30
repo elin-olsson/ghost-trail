@@ -6,7 +6,9 @@ import re
 import json
 from datetime import datetime
 
-__version__ = "1.4.0"
+from shadowfox_pdf import PDFReport, GREEN, RED, ORANGE, BLUE, DEEP_RED, GREY
+
+__version__ = "1.5.0"
 
 # Add src to path - using absolute path of the script's directory
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -307,7 +309,7 @@ class GhostTrail:
         
         return grade, stats, critical_findings
 
-    def run(self, hours=24, collect=False, json_file=None, html_file=None):
+    def run(self, hours=24, collect=False, json_file=None, html_file=None, pdf_file=None):
         events, artifact_paths = self.generate_timeline(hours=hours)
         grade, stats, criticals = self.calculate_risk(events)
         
@@ -340,6 +342,10 @@ class GhostTrail:
         if html_file:
             self.export_html(events, html_file, grade, stats)
             print(f"  [SUCCESS] HTML report saved: {html_file}")
+
+        if pdf_file:
+            self.export_pdf(events, pdf_file, grade, stats, criticals)
+            print(f"  [SUCCESS] PDF report saved: {pdf_file}")
 
         if collect:
             print(f"\n--- Forensic Evidence Collection ---")
@@ -390,6 +396,51 @@ class GhostTrail:
         with open(output_file, "w") as f:
             f.write(html)
 
+    _PDF_GRADE_COLOR = {"A": GREEN, "B": GREEN, "C": ORANGE, "D": ORANGE, "F": RED}
+    _PDF_TYPE_COLOR = {"LOGIN": BLUE, "FILE": GREEN, "ALERT": RED, "SEQUENCE": DEEP_RED}
+
+    def export_pdf(self, timeline, output_file, grade, stats, criticals):
+        """Write a client-ready PDF version of the forensic timeline."""
+        sequences = [e for e in timeline if e["type"] == "SEQUENCE"]
+        base_events = [e for e in timeline if e["type"] != "SEQUENCE"]
+
+        report = PDFReport("ghost-trail", "Forensic Timeline Report")
+        report.heading("Forensic Timeline Report")
+        report.text(f"Grade: {grade}", bold=True,
+                    color=self._PDF_GRADE_COLOR.get(grade, GREY))
+        report.text(
+            f"Sequences: {stats.get('SEQUENCE', 0)}   Alerts: {stats.get('ALERT', 0)}   "
+            f"Logins: {stats.get('LOGIN', 0)}   Files: {stats.get('FILE', 0)}"
+        )
+        report.rule()
+
+        report.subheading(f"Attack Sequences ({len(sequences)})")
+        if sequences:
+            for s in sequences:
+                report.severity_line("SEQUENCE", s["msg"], "", DEEP_RED)
+                for step in s["steps"]:
+                    report.text(f"{step['time']}  {step['msg']}", size=8.5,
+                                mono=True, indent=10, color=GREY)
+                report.spacer(4)
+        else:
+            report.text("No correlated attack sequences detected.", color=GREY)
+        report.spacer(6)
+
+        if criticals:
+            report.rule()
+            report.subheading("The Smoking Gun (Critical Findings)")
+            for c in sorted(set(criticals)):
+                report.text(c, size=9, color=RED)
+            report.spacer(6)
+
+        report.rule()
+        report.subheading(f"Event Log ({len(base_events)})")
+        for e in base_events:
+            color = self._PDF_TYPE_COLOR.get(e["type"], GREY)
+            report.severity_line(e["type"], e["time"], e["msg"], color)
+
+        report.save(output_file)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ghost-Trail: Forensic Reconstructor")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -397,7 +448,9 @@ if __name__ == "__main__":
     parser.add_argument("--collect", action="store_true", help="Package artifacts into ZIP")
     parser.add_argument("--json", help="Export timeline to JSON file")
     parser.add_argument("--html", help="Export timeline to HTML report")
+    parser.add_argument("--pdf", help="Export timeline to a client-ready PDF report")
     args = parser.parse_args()
 
     ghost = GhostTrail()
-    ghost.run(hours=args.hours, collect=args.collect, json_file=args.json, html_file=args.html)
+    ghost.run(hours=args.hours, collect=args.collect, json_file=args.json,
+              html_file=args.html, pdf_file=args.pdf)

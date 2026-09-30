@@ -43,6 +43,9 @@ python3 ghosttrail.py --json report.json
 # Export interactive HTML report with timeline
 python3 ghosttrail.py --html report.html
 
+# Export a client-ready PDF report
+python3 ghosttrail.py --pdf report.pdf
+
 # Package forensic artifacts into a ZIP archive
 python3 ghosttrail.py --collect
 ```
@@ -55,6 +58,7 @@ python3 ghosttrail.py --collect
 | `--hours N` | Reconstruction window in hours (default: 24) |
 | `--json FILE` | Write timeline to JSON file |
 | `--html FILE` | Write interactive HTML report with D3 timeline |
+| `--pdf FILE` | Write a client-ready PDF report |
 | `--collect` | Package artifacts into a ZIP archive for handoff |
 
 ## What it checks
@@ -88,6 +92,16 @@ python3 ghosttrail.py --collect
 ══════════════════════════════════════════════════════════════
 ```
 
+## PDF report
+
+Use `--pdf <file>` to generate a paginated PDF version of the timeline suitable for handing to a client after an engagement:
+
+```bash
+python3 ghosttrail.py --pdf report.pdf
+```
+
+Includes the grade, summary counts, attack sequences with their LOGIN → ALERT → FILE steps, critical findings, and the full event log. Built with a small dependency-free PDF writer (no LaTeX, no headless browser) so it needs nothing beyond the Python standard library.
+
 ## Dependencies
 
 No runtime dependencies — stdlib only.
@@ -95,6 +109,7 @@ No runtime dependencies — stdlib only.
 | Package | Version | Purpose |
 |---|---|---|
 | `pytest` | ≥ 9.0 | Test suite only — not required at runtime |
+| `shadowfox_pdf` | vendored | Dependency-free PDF report writer, bundled in this repo (`shadowfox_pdf.py`) |
 
 ---
 
